@@ -170,31 +170,98 @@ async function viewLabels() {
     }).join('')}</div>`;
 }
 
+async function buildBackup() {
+  const enc = async (o) => (o.photo ? { ...o, photo: await blobToDataURL(o.photo) } : o);
+  return JSON.stringify({
+    version: 1,
+    boxes: await Promise.all((await DB.all('boxes')).map(enc)),
+    items: await Promise.all((await DB.all('items')).map(enc)),
+  });
+}
+
+async function restoreBackup(text) {
+  const data = JSON.parse(text);
+  if (!Array.isArray(data.boxes) || !Array.isArray(data.items)) throw new Error('bad format');
+  const dec = async (o) => (typeof o.photo === 'string' ? { ...o, photo: await dataURLToBlob(o.photo) } : o);
+  const boxes = await Promise.all(data.boxes.map(dec)), items = await Promise.all(data.items.map(dec));
+  await DB.clear();
+  for (const b of boxes) await DB.put('boxes', b);
+  for (const i of items) await DB.put('items', i);
+  return { boxes: boxes.length, items: items.length };
+}
+
+const backupName = () => 'garage-boxes-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.json';
+
 async function viewBackup() {
   setHeader('Backup'); setTab('backup');
-  $view.innerHTML = `<p>Your data lives only on this device. Export a backup regularly (and before clearing browser data).</p>
-    <button class="pri fab" id="ex">Export backup (.json)</button>
-    <label>Import backup (replaces current data)</label><input type="file" id="im" accept="application/json">`;
+  const last = Number(Drive.store.get('gb-last-backup')) || 0;
+  const days = last ? Math.floor((Date.now() - last) / 86400000) : null;
+  const lastTxt = last ? `Last backup: ${new Date(last).toLocaleString()}` + (days > 30 ? ` (${days} days ago, time for a new one)` : '') : 'No backup made yet.';
+  $view.innerHTML = `<p>Your data lives only on this device. ${esc(lastTxt)}</p>
+    <h3>Google Drive</h3>
+    <label>Google OAuth client ID (one-time setup, see README)</label>
+    <input id="cid" placeholder="123456-abc.apps.googleusercontent.com" value="${esc(Drive.clientId())}" autocomplete="off">
+    <button class="pri fab" id="dbk">Back up to Drive</button>
+    <button class="fab" id="drs">Restore from Drive</button>
+    <div id="dlist"></div><p class="hint" id="dmsg" role="status"></p>
+    <h3>File</h3>
+    <button class="fab" id="ex">Export backup (.json)</button>
+    <label>Import backup file (replaces current data)</label><input type="file" id="im" accept="application/json">`;
+  const msg = (t) => { $view.querySelector('#dmsg').textContent = t; };
+  const cid = $view.querySelector('#cid');
+  cid.onchange = () => Drive.setClientId(cid.value);
+  const markBackedUp = () => Drive.store.set('gb-last-backup', String(Date.now()));
+
+  $view.querySelector('#dbk').onclick = async () => {
+    Drive.setClientId(cid.value);
+    try {
+      msg('Signing in…');
+      await Drive.signIn();
+      msg('Uploading…');
+      const f = await Drive.upload(backupName(), await buildBackup());
+      markBackedUp(); msg('Saved to Google Drive as ' + f.name);
+    } catch (e) { msg('Backup failed: ' + e.message); }
+  };
+
+  $view.querySelector('#drs').onclick = async () => {
+    Drive.setClientId(cid.value);
+    const box = $view.querySelector('#dlist');
+    try {
+      msg('Signing in…');
+      await Drive.signIn();
+      const files = await Drive.list();
+      if (!files.length) { box.innerHTML = ''; msg('No backups found in Drive yet.'); return; }
+      msg('Pick a backup to restore (replaces current data):');
+      box.innerHTML = files.map((f) => `<button class="fab" data-id="${esc(f.id)}">${esc(new Date(f.createdTime).toLocaleString())}</button>`).join('');
+      box.onclick = async (e) => {
+        const id = e.target.dataset.id; if (!id) return;
+        if (!confirm('Replace all current data with this backup?')) return;
+        try {
+          msg('Restoring…');
+          const r = await restoreBackup(await Drive.download(id));
+          alert('Restored ' + r.boxes + ' boxes, ' + r.items + ' items.');
+          location.hash = '#/boxes';
+        } catch (err) { msg('Restore failed: ' + err.message); }
+      };
+    } catch (e) { msg('Could not list backups: ' + e.message); }
+  };
+
   $view.querySelector('#ex').onclick = async () => {
-    const enc = async (o) => (o.photo ? { ...o, photo: await blobToDataURL(o.photo) } : o);
-    const data = { version: 1, boxes: await Promise.all((await DB.all('boxes')).map(enc)), items: await Promise.all((await DB.all('items')).map(enc)) };
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
-    a.download = 'garage-boxes-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.href = URL.createObjectURL(new Blob([await buildBackup()], { type: 'application/json' }));
+    a.download = backupName();
     a.click();
+    markBackedUp();
   };
   $view.querySelector('#im').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
-      if (!Array.isArray(data.boxes) || !Array.isArray(data.items)) throw new Error('bad format');
+      const text = await file.text();
+      const d = JSON.parse(text);
+      if (!Array.isArray(d.boxes) || !Array.isArray(d.items)) throw new Error('bad format');
       if (!confirm('Replace all current data with this backup?')) return;
-      const dec = async (o) => (typeof o.photo === 'string' ? { ...o, photo: await dataURLToBlob(o.photo) } : o);
-      const boxes = await Promise.all(data.boxes.map(dec)), items = await Promise.all(data.items.map(dec));
-      await DB.clear();
-      for (const b of boxes) await DB.put('boxes', b);
-      for (const i of items) await DB.put('items', i);
-      alert('Imported ' + boxes.length + ' boxes, ' + items.length + ' items.');
+      const r = await restoreBackup(text);
+      alert('Imported ' + r.boxes + ' boxes, ' + r.items + ' items.');
       location.hash = '#/boxes';
     } catch (err) { alert('Could not import: ' + err.message); }
   };
