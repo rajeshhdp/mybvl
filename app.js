@@ -67,7 +67,7 @@ async function viewBoxes() {
     const fd = new FormData(e.target);
     const b = { id: DB.uid(), name: fd.get('name').trim(), location: fd.get('location').trim(), notes: '' };
     await DB.put('boxes', b);
-    location.hash = '#/box/' + b.id;
+    location.hash = '#/label/' + b.id;
   };
 }
 
@@ -77,10 +77,14 @@ async function viewBox(id) {
   setHeader(box.name, '#/boxes'); setTab('boxes');
   const items = (await DB.all('items')).filter((i) => i.boxId === id).sort((a, b) => a.name.localeCompare(b.name));
   $view.innerHTML = `<p class="hint">${esc(box.location) || 'No location set'} · ${items.length} items
-    · <a href="#/boxedit/${id}">Edit box</a></p>
+    · <a href="#/boxedit/${id}">Edit box</a> · <a href="#/label/${id}">QR label</a></p>
     ${box.photo ? `<img src="${photoURL(box.photo)}" alt="" style="width:100%;border-radius:12px">` : ''}
     <form id="f" class="row noprint" style="margin:12px 0"><input name="name" required placeholder="Add item, press Enter" autocomplete="off">
+    <button type="button" id="snap" aria-label="Take photo">📷</button>
     <button class="pri">Add</button></form>
+    <input type="file" id="shot" accept="image/*" capture="environment" hidden>
+    <div id="pv" class="row noprint" hidden style="margin-bottom:12px"><img id="pvimg" class="thumb" alt="Photo to attach" style="width:56px;height:56px;border-radius:8px;object-fit:cover">
+    <span class="hint grow" style="flex:1">Photo will be attached to the next item.</span><button type="button" id="pvx" aria-label="Remove photo">✕</button></div>
     ${items.map((i) => `<div class="card" data-id="${i.id}">
       ${i.photo ? `<img class="thumb" src="${photoURL(i.photo)}" alt="">` : ''}
       <a class="grow" href="#/item/${i.id}" style="color:inherit;text-decoration:none"><b>${esc(i.name)}</b>
@@ -88,11 +92,28 @@ async function viewBox(id) {
       <div class="qty"><button data-d="-1">−</button><span>${i.qty}</span><button data-d="1">+</button></div></div>`).join('')
       || '<p class="empty">Empty. Add the first item above.</p>'}`;
   const f = $view.querySelector('#f');
+  let pending = null, pendingURL = '';
+  const setPending = (blob) => {
+    if (pendingURL) URL.revokeObjectURL(pendingURL);
+    pending = blob; pendingURL = blob ? URL.createObjectURL(blob) : '';
+    $view.querySelector('#pv').hidden = !blob;
+    $view.querySelector('#pvimg').src = pendingURL;
+    $view.querySelector('#snap').classList.toggle('pri', !!blob);
+  };
+  $view.querySelector('#snap').onclick = () => $view.querySelector('#shot').click();
+  $view.querySelector('#shot').onchange = async (e) => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    try { setPending(await shrinkImage(file)); f.querySelector('input').focus(); }
+    catch { alert('Could not read that photo.'); }
+  };
+  $view.querySelector('#pvx').onclick = () => setPending(null);
   f.onsubmit = async (e) => {
     e.preventDefault();
     const name = new FormData(f).get('name').trim();
     if (!name) return;
-    await DB.put('items', { id: DB.uid(), boxId: id, name, qty: 1, tags: [], notes: '' });
+    await DB.put('items', { id: DB.uid(), boxId: id, name, qty: 1, tags: [], notes: '', ...(pending ? { photo: pending } : {}) });
+    if (pendingURL) URL.revokeObjectURL(pendingURL);
     freeURLs(); await viewBox(id);
     $view.querySelector('#f input').focus();
   };
@@ -158,16 +179,93 @@ async function viewItem(id) {
   };
 }
 
+// Draw a printable label: QR code + box name + location. Returns a canvas.
+function makeLabelCanvas(box) {
+  const W = 600, H = 720, QR = 480;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  const qr = qrcode(0, 'M'); qr.addData(boxLink(box.id)); qr.make();
+  const n = qr.getModuleCount(), quiet = 2, cell = Math.floor(QR / (n + quiet * 2));
+  const size = cell * (n + quiet * 2), ox = Math.round((W - size) / 2), oy = 30;
+  g.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let col = 0; col < n; col++) if (qr.isDark(r, col)) g.fillRect(ox + (col + quiet) * cell, oy + (r + quiet) * cell, cell, cell);
+  const fit = (text, max, start, weight) => {
+    let px = start;
+    do { g.font = `${weight} ${px}px system-ui, sans-serif`; px -= 2; } while (g.measureText(text).width > max && px > 14);
+  };
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillStyle = '#000';
+  fit(box.name, W - 60, 72, 700); g.fillText(box.name, W / 2, oy + size + 80);
+  if (box.location) { fit(box.location, W - 60, 36, 400); g.fillStyle = '#444'; g.fillText(box.location, W / 2, oy + size + 130); }
+  g.strokeStyle = '#999'; g.setLineDash([8, 6]); g.lineWidth = 2; g.strokeRect(4, 4, W - 8, H - 8);
+  return c;
+}
+const canvasBlob = (c) => new Promise((res) => c.toBlob(res, 'image/png'));
+const fileSafe = (s) => s.replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '') || 'box';
+
+async function viewLabel(id) {
+  const box = await DB.get('boxes', id);
+  if (!box) { $view.innerHTML = '<p class="empty">Box not found on this device.</p>'; setHeader('Not found', '#/boxes'); return; }
+  setHeader('QR label', '#/box/' + id); setTab('boxes');
+  const canvas = makeLabelCanvas(box);
+  const blob = await canvasBlob(canvas);
+  const file = new File([blob], fileSafe(box.name) + '-qr.png', { type: 'image/png' });
+  const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+  $view.innerHTML = `<p class="hint noprint">Label for <b>${esc(box.name)}</b>. Save or print it and stick it on the box.</p>
+    <div class="label single"><img id="lbl" src="${photoURL(blob)}" alt="QR label for ${esc(box.name)}"></div>
+    <div class="noprint"><button class="pri fab" id="sv">Save image</button>
+    ${canShare ? '<button class="fab" id="sh">Share…</button>' : ''}
+    <button class="fab" id="pr">Print</button>
+    <a class="card" href="#/box/${id}" style="justify-content:center">Add items to this box →</a></div>`;
+  $view.querySelector('#sv').onclick = () => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  };
+  const sh = $view.querySelector('#sh');
+  if (sh) sh.onclick = () => navigator.share({ files: [file], title: box.name }).catch(() => {});
+  $view.querySelector('#pr').onclick = () => window.print();
+}
+
 async function viewLabels() {
   setHeader('QR labels'); setTab('labels');
   const boxes = (await DB.all('boxes')).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (!boxes.length) { $view.innerHTML = '<p class="empty">Add boxes first.</p>'; return; }
-  $view.innerHTML = `<p class="hint noprint">Print, cut out and stick one on each box. Scanning it with this phone opens the box contents.</p>
-    <button class="pri fab noprint" onclick="window.print()">Print labels</button><div class="labels">
-    ${boxes.map((b) => {
-      const qr = qrcode(0, 'M'); qr.addData(boxLink(b.id)); qr.make();
-      return `<div class="label">${qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })}<b>${esc(b.name)}</b><span>${esc(b.location)}</span></div>`;
-    }).join('')}</div>`;
+  const imgs = await Promise.all(boxes.map(async (b) => photoURL(await canvasBlob(makeLabelCanvas(b)))));
+  $view.innerHTML = `<p class="hint noprint">Print, cut out and stick one on each box. Tap a label to save it on its own.</p>
+    <button class="pri fab noprint" onclick="window.print()">Print all labels</button><div class="labels">
+    ${boxes.map((b, i) => `<a class="label" href="#/label/${b.id}"><img src="${imgs[i]}" alt="QR label for ${esc(b.name)}"></a>`).join('')}</div>`;
+}
+
+async function viewScan() {
+  setHeader('Scan a box'); setTab('scan');
+  $view.innerHTML = `<div id="cam"><video id="v" muted playsinline></video></div>
+    <p class="hint" id="smsg" role="status">Point the camera at a box's QR label.</p>
+    <div id="sfall" hidden><label>Or take/choose a photo of the label</label>
+    <input type="file" id="sfile" accept="image/*" capture="environment">
+    <a class="card" href="#/boxes" style="justify-content:center">Browse boxes instead</a></div>`;
+  const msg = (t) => { $view.querySelector('#smsg').textContent = t; };
+  let busy = false, lastBad = 0;
+  const handle = async (text) => {
+    if (busy) return;
+    const id = Scanner.parseBoxId(text);
+    if (!id) { if (Date.now() - lastBad > 2000) { lastBad = Date.now(); msg('That QR code is not a box label. Keep scanning…'); } return; }
+    busy = true;
+    if (await DB.get('boxes', id)) { Scanner.stop(); location.hash = '#/box/' + id; return; }
+    msg("That box isn't in this device's data. If you added it on another device, restore a backup (Backup tab).");
+    setTimeout(() => { busy = false; }, 2500);
+  };
+  const fall = (why) => { $view.querySelector('#cam').hidden = true; $view.querySelector('#sfall').hidden = false; msg(why); };
+  $view.querySelector('#sfile').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    msg('Reading…');
+    try {
+      const text = await Scanner.decodeFile(f);
+      if (!text) { msg('No QR code found in that photo. Try again closer and in good light.'); return; }
+      busy = false; await handle(text);
+    } catch { msg('Could not read that image.'); }
+  };
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fall('Camera is not available here (needs HTTPS).'); return; }
+  try { await Scanner.start($view.querySelector('#v'), handle); }
+  catch (e) { fall('Camera unavailable: ' + (e.name === 'NotAllowedError' ? 'permission was denied.' : e.message)); }
 }
 
 async function buildBackup() {
@@ -269,7 +367,7 @@ async function viewBackup() {
 
 // ---------- Router ----------
 async function route() {
-  freeURLs(); $view.onclick = null;
+  Scanner.stop(); freeURLs(); $view.onclick = null;
   const [, p, id] = (location.hash || '#/').split('/');
   try {
     if (p === 'box') await viewBox(id);
@@ -277,6 +375,8 @@ async function route() {
     else if (p === 'item') await viewItem(id);
     else if (p === 'boxes') await viewBoxes();
     else if (p === 'labels') await viewLabels();
+    else if (p === 'label') await viewLabel(id);
+    else if (p === 'scan') await viewScan();
     else if (p === 'backup') await viewBackup();
     else await viewSearch();
   } catch (e) { $view.innerHTML = '<p class="empty">Something went wrong: ' + esc(e.message) + '</p>'; }

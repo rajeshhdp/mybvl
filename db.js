@@ -21,7 +21,7 @@ const DB = (() => {
     return new Promise((res, rej) => {
       const t = d.transaction(store, mode);
       const out = fn(t.objectStore(store));
-      t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+      t.oncomplete = () => res(out instanceof IDBRequest ? out.result : out);
       t.onerror = () => rej(t.error);
     });
   }
