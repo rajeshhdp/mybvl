@@ -80,7 +80,11 @@ async function viewBox(id) {
     · <a href="#/boxedit/${id}">Edit box</a> · <a href="#/label/${id}">QR label</a></p>
     ${box.photo ? `<img src="${photoURL(box.photo)}" alt="" style="width:100%;border-radius:12px">` : ''}
     <form id="f" class="row noprint" style="margin:12px 0"><input name="name" required placeholder="Add item, press Enter" autocomplete="off">
+    <button type="button" id="snap" aria-label="Take photo">📷</button>
     <button class="pri">Add</button></form>
+    <input type="file" id="shot" accept="image/*" capture="environment" hidden>
+    <div id="pv" class="row noprint" hidden style="margin-bottom:12px"><img id="pvimg" class="thumb" alt="Photo to attach" style="width:56px;height:56px;border-radius:8px;object-fit:cover">
+    <span class="hint grow" style="flex:1">Photo will be attached to the next item.</span><button type="button" id="pvx" aria-label="Remove photo">✕</button></div>
     ${items.map((i) => `<div class="card" data-id="${i.id}">
       ${i.photo ? `<img class="thumb" src="${photoURL(i.photo)}" alt="">` : ''}
       <a class="grow" href="#/item/${i.id}" style="color:inherit;text-decoration:none"><b>${esc(i.name)}</b>
@@ -88,11 +92,28 @@ async function viewBox(id) {
       <div class="qty"><button data-d="-1">−</button><span>${i.qty}</span><button data-d="1">+</button></div></div>`).join('')
       || '<p class="empty">Empty. Add the first item above.</p>'}`;
   const f = $view.querySelector('#f');
+  let pending = null, pendingURL = '';
+  const setPending = (blob) => {
+    if (pendingURL) URL.revokeObjectURL(pendingURL);
+    pending = blob; pendingURL = blob ? URL.createObjectURL(blob) : '';
+    $view.querySelector('#pv').hidden = !blob;
+    $view.querySelector('#pvimg').src = pendingURL;
+    $view.querySelector('#snap').classList.toggle('pri', !!blob);
+  };
+  $view.querySelector('#snap').onclick = () => $view.querySelector('#shot').click();
+  $view.querySelector('#shot').onchange = async (e) => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    try { setPending(await shrinkImage(file)); f.querySelector('input').focus(); }
+    catch { alert('Could not read that photo.'); }
+  };
+  $view.querySelector('#pvx').onclick = () => setPending(null);
   f.onsubmit = async (e) => {
     e.preventDefault();
     const name = new FormData(f).get('name').trim();
     if (!name) return;
-    await DB.put('items', { id: DB.uid(), boxId: id, name, qty: 1, tags: [], notes: '' });
+    await DB.put('items', { id: DB.uid(), boxId: id, name, qty: 1, tags: [], notes: '', ...(pending ? { photo: pending } : {}) });
+    if (pendingURL) URL.revokeObjectURL(pendingURL);
     freeURLs(); await viewBox(id);
     $view.querySelector('#f input').focus();
   };
