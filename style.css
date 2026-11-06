@@ -7,7 +7,7 @@ header h1{font-size:1.15rem;margin:0;flex:1}
 .icon-btn{background:none;border:0;color:inherit;font-size:1.4rem;padding:4px 8px;order:-1}
 main{padding:16px;max-width:720px;margin:0 auto}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom)}
-nav a{flex:1;text-align:center;padding:12px 4px;color:var(--mut);text-decoration:none;font-size:.85rem}
+nav a{flex:1;text-align:center;padding:12px 2px;color:var(--mut);text-decoration:none;font-size:.75rem}
 nav a.on{color:var(--acc);font-weight:600}
 input,textarea,select,button{font:inherit;color:inherit}
 input,textarea{width:100%;padding:12px;border:1px solid var(--bd);border-radius:10px;background:var(--card);margin:4px 0 10px}
@@ -30,7 +30,9 @@ label{font-size:.85rem;color:var(--mut)}
 .fab{margin:12px 0;width:100%}
 .labels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
 .label{border:1px dashed var(--bd);border-radius:8px;padding:10px;text-align:center;background:#fff;color:#000;break-inside:avoid}
-.label svg,.label img{width:140px;height:140px}
-.label b{display:block;font-size:1.1rem}
-.label span{font-size:.8rem;color:#444}
+.label{padding:0;display:block}
+.label img{display:block;width:100%;height:auto}
+.label.single{max-width:360px;margin:0 auto 12px}
+#cam{background:#000;border-radius:12px;overflow:hidden}
+#cam video{width:100%;display:block;max-height:60vh;object-fit:cover}
 @media print{header,nav,.noprint{display:none!important}body{background:#fff;padding:0}main{max-width:none;padding:0}.label{border:1px dashed #999}}
