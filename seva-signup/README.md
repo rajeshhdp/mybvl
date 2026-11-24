@@ -1,32 +1,31 @@
 # Weekly Seva Signup · North Fort Worth Bhakti Center
 
-Two pages, no devotee accounts:
+Two pages, no devotee accounts, **no database**:
 
-- **`/`** – devotees see the upcoming program date and seva cards, tap **Sign Up**, type their name, done.
-- **`/#/admin`** – password-protected: set the date, add/edit/remove services, set volunteers needed, see and remove names, and reset the week.
+- **`/`**: devotees see the upcoming program date and seva cards, tap **Sign Up**, type their name, done.
+- **`/#/admin`**: password-protected. Set the date, add/edit/remove services, set volunteers needed, see and remove names, reset the week.
 
-React + Vite frontend, Supabase (Postgres + Realtime + Auth) backend.
+React (Vite) frontend plus a tiny dependency-free Node server (`server.js`) that keeps everything in one file, `data.json`. Signups update live on every open screen.
 
-## Setup (about 10 minutes)
+## Run it
 
-1. Create a project at [supabase.com](https://supabase.com).
-2. **Authentication → Providers → Email**: turn **off** "Allow new users to sign up". **Authentication → Users → Add user**: create the admin (email + password, auto-confirm). The password is what you type on the admin page.
-3. Open `supabase/schema.sql`, replace `admin@example.com` with your admin email, then run it in **SQL Editor**. It creates the tables, security rules and the nine starter services.
-4. Copy `.env.example` to `.env` and fill in the project URL, anon key (Project Settings → API) and admin email.
-5. Run:
-   ```bash
-   npm install
-   npm run dev      # local
-   npm run build    # outputs dist/ — host on Netlify, Vercel, GitHub Pages, etc.
-   ```
-   Set the same three `VITE_` variables in your host's environment settings.
+```bash
+npm install
+npm run build
+ADMIN_PASSWORD=your-secret-password npm start     # http://localhost:3000
+```
 
-Without a `.env`, the app runs in **demo mode** (data kept in your browser only; admin password `krishna`) so you can try it out.
+Options (environment variables): `PORT` (default 3000), `DATA_FILE` (default `./data.json`).
+The server refuses to start without `ADMIN_PASSWORD`.
 
-## How it's secured
-- Database rules (Row Level Security) let anyone **read**, but only the admin email can change services, the date, or delete signups.
-- Devotees can't write to the table directly; they call `sign_up()`, which locks the service row and enforces the volunteer limit and the no-duplicate-name rule (case-insensitive) atomically, so two people can't take the last spot together.
-- `reset_week()` clears all signups and sets the new date in one step, admin only.
-- The anon key in the frontend is public by design; it is safe because of the rules above. Never put the service-role key in this app.
+For development with hot reload: run `ADMIN_PASSWORD=test npm start` in one terminal and `npm run dev` in another.
 
-Known limit: since there's no devotee login, someone could type a fake name. The admin can remove any signup.
+## Hosting
+Needs any host that runs Node and keeps a small disk (so `data.json` survives restarts): a cheap VPS, Render/Railway/Fly with a persistent volume, or a computer at the center. Put `DATA_FILE` on the persistent disk. Static-only hosts (GitHub Pages, Netlify) won't work because signups must be shared and saved by the server.
+
+## Notes
+- Signup limits and duplicate names (any capitalisation) are enforced on the server, so two people can't take the last spot together.
+- Admin actions need a signed login token (valid 12 hours); repeated wrong passwords are slowed down. Use HTTPS in production.
+- "Reset week" clears all signups and sets the next date; your services stay.
+- To back up or edit by hand, just copy `data.json`.
+- Since there's no devotee login, someone could type a fake name; the admin can remove any signup.

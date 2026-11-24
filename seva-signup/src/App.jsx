@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import Header from './components/Header.jsx';
 import DevoteePage from './components/DevoteePage.jsx';
 import AdminPage from './components/AdminPage.jsx';
-import { isDemo } from './api.js';
 
 const route = () => (window.location.hash.startsWith('#/admin') ? 'admin' : 'home');
 
@@ -17,12 +16,6 @@ export default function App() {
   return (
     <>
       <Header admin={page === 'admin'} />
-      {isDemo && (
-        <div className="demo-banner">
-          Demo mode: Supabase isn’t configured, so data lives only in this browser.
-          {page === 'admin' && ' Admin password: krishna'}
-        </div>
-      )}
       <main>{page === 'admin' ? <AdminPage /> : <DevoteePage />}</main>
       <footer className="footer">
         <p>🪷 North Fort Worth Bhakti Center</p>

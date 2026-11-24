@@ -1,4 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({ plugins: [react()], base: './' });
+// In dev, forward /api to server.js (run: ADMIN_PASSWORD=test npm start)
+export default defineConfig({
+  plugins: [react()],
+  server: { proxy: { '/api': 'http://localhost:3000' } },
+});
